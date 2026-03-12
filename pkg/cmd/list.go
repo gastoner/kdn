@@ -31,6 +31,7 @@ func NewListCmd() *cobra.Command {
 		Use:     "list",
 		Short:   workspaceListCmd.Short,
 		Long:    workspaceListCmd.Long,
+		Example: AdaptExampleForAlias(workspaceListCmd.Example, "workspace list", "list"),
 		Args:    workspaceListCmd.Args,
 		PreRunE: workspaceListCmd.PreRunE,
 		RunE:    workspaceListCmd.RunE,

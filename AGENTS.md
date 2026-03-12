@@ -205,11 +205,13 @@ Skills are reusable capabilities that can be discovered and executed by AI agent
 2. In the `New<Command>Cmd()` function:
    - Create and configure the `cobra.Command`
    - **IMPORTANT**: Always define the `Args` field to specify argument validation
+   - **IMPORTANT**: Always add an `Example` field with usage examples
    - Set up any flags or subcommands
    - Return the configured command
 3. Register the command in `pkg/cmd/root.go` by adding `rootCmd.AddCommand(New<Command>Cmd())` in the `NewRootCmd()` function
 4. Create corresponding test file `pkg/cmd/<command>_test.go`
 5. In tests, create command instances using `NewRootCmd()` or `New<Command>Cmd()` as needed
+6. **IMPORTANT**: Add a `Test<Command>Cmd_Examples` function to validate the examples
 
 **Command Argument Validation:**
 
@@ -227,6 +229,8 @@ func NewExampleCmd() *cobra.Command {
     return &cobra.Command{
         Use:   "example",
         Short: "An example command",
+        Example: `# Run the example command
+kortex-cli example`,
         Args:  cobra.NoArgs,  // Always declare Args field
         Run: func(cmd *cobra.Command, args []string) {
             // Command logic here
@@ -237,6 +241,142 @@ func NewExampleCmd() *cobra.Command {
 // In pkg/cmd/root.go, add to NewRootCmd():
 rootCmd.AddCommand(NewExampleCmd())
 ```
+
+**Command Examples:**
+
+All commands **MUST** include an `Example` field with usage examples. Examples improve help documentation and are automatically validated to ensure they stay accurate as the code evolves.
+
+**Example Format:**
+```go
+func NewExampleCmd() *cobra.Command {
+    return &cobra.Command{
+        Use:   "example [arg]",
+        Short: "An example command",
+        Example: `# Basic usage with comment
+kortex-cli example
+
+# With argument
+kortex-cli example value
+
+# With flag
+kortex-cli example --flag value`,
+        Args: cobra.MaximumNArgs(1),
+        Run: func(cmd *cobra.Command, args []string) {
+            // Command logic here
+        },
+    }
+}
+```
+
+**Example Guidelines:**
+- Use comments (lines starting with `#`) to describe what each example does
+- Show the most common use cases (typically 3-5 examples)
+- Include examples for all important flags
+- Examples must use the actual binary name (`kortex-cli`)
+- All commands and flags in examples must exist
+- Keep examples concise and realistic
+
+**Validating Examples:**
+
+Every command with an `Example` field **MUST** have a corresponding validation test:
+
+```go
+func Test<Command>Cmd_Examples(t *testing.T) {
+    t.Parallel()
+
+    // Get the command
+    cmd := New<Command>Cmd()
+
+    // Verify Example field is not empty
+    if cmd.Example == "" {
+        t.Fatal("Example field should not be empty")
+    }
+
+    // Parse the examples
+    commands, err := testutil.ParseExampleCommands(cmd.Example)
+    if err != nil {
+        t.Fatalf("Failed to parse examples: %v", err)
+    }
+
+    // Verify we have the expected number of examples
+    expectedCount := 3  // Adjust based on your examples
+    if len(commands) != expectedCount {
+        t.Errorf("Expected %d example commands, got %d", expectedCount, len(commands))
+    }
+
+    // Validate all examples against the root command
+    rootCmd := NewRootCmd()
+    err = testutil.ValidateCommandExamples(rootCmd, cmd.Example)
+    if err != nil {
+        t.Errorf("Example validation failed: %v", err)
+    }
+}
+```
+
+**What the validator checks:**
+- Binary name is `kortex-cli`
+- All commands exist in the command tree
+- All flags (both long and short) are valid for the command
+- No invalid subcommands are used
+
+**Reference:** See `pkg/cmd/init.go` and `pkg/cmd/init_test.go` for complete examples.
+
+**Alias Commands:**
+
+Alias commands are shortcuts that delegate to existing commands (e.g., `list` as an alias for `workspace list`). For alias commands:
+
+1. **Inherit the Example field** from the original command
+2. **Adapt the examples** to show the alias syntax instead of the full command
+3. **Do NOT create validation tests** for aliases (they use the same validation as the original command)
+
+Use the `AdaptExampleForAlias()` helper function (from `pkg/cmd/helpers.go`) to automatically replace the command name in examples while preserving comments:
+
+```go
+func NewListCmd() *cobra.Command {
+    // Create the workspace list command
+    workspaceListCmd := NewWorkspaceListCmd()
+
+    // Create an alias command that delegates to workspace list
+    cmd := &cobra.Command{
+        Use:     "list",
+        Short:   workspaceListCmd.Short,
+        Long:    workspaceListCmd.Long,
+        Example: AdaptExampleForAlias(workspaceListCmd.Example, "workspace list", "list"),
+        Args:    workspaceListCmd.Args,
+        PreRunE: workspaceListCmd.PreRunE,
+        RunE:    workspaceListCmd.RunE,
+    }
+
+    // Copy flags from workspace list command
+    cmd.Flags().AddFlagSet(workspaceListCmd.Flags())
+
+    return cmd
+}
+```
+
+The `AdaptExampleForAlias()` function:
+- Replaces the original command with the alias **only in command lines** (lines starting with `kortex-cli`)
+- **Preserves comments unchanged** (lines starting with `#`)
+- Maintains formatting and indentation
+
+**Example transformation:**
+```bash
+# Original (from workspace list):
+# List all workspaces
+kortex-cli workspace list
+
+# List in JSON format
+kortex-cli workspace list --output json
+
+# After AdaptExampleForAlias(..., "workspace list", "list"):
+# List all workspaces
+kortex-cli list
+
+# List in JSON format
+kortex-cli list --output json
+```
+
+**Reference:** See `pkg/cmd/list.go` and `pkg/cmd/remove.go` for complete alias examples.
 
 ### Command Implementation Pattern
 

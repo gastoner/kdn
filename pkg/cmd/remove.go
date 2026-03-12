@@ -31,6 +31,7 @@ func NewRemoveCmd() *cobra.Command {
 		Use:     "remove ID",
 		Short:   workspaceRemoveCmd.Short,
 		Long:    workspaceRemoveCmd.Long,
+		Example: AdaptExampleForAlias(workspaceRemoveCmd.Example, "workspace remove", "remove"),
 		Args:    workspaceRemoveCmd.Args,
 		PreRunE: workspaceRemoveCmd.PreRunE,
 		RunE:    workspaceRemoveCmd.RunE,
