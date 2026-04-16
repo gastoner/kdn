@@ -18,9 +18,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"text/template"
 
 	api "github.com/openkaiden/kdn-api/cli/go"
 	"github.com/openkaiden/kdn/pkg/logger"
@@ -29,6 +31,17 @@ import (
 	"github.com/openkaiden/kdn/pkg/runtime/podman/pods"
 	"github.com/openkaiden/kdn/pkg/steplogger"
 )
+
+const defaultOnecliVersion = "1.17"
+
+// podTemplateData holds the values used to render the pod YAML template.
+type podTemplateData struct {
+	Name              string
+	PostgresPort      int
+	OnecliPort        int
+	OnecliMetricsPort int
+	OnecliVersion     string
+}
 
 // validateCreateParams validates the create parameters.
 func (p *podmanRuntime) validateCreateParams(params runtime.CreateParams) error {
@@ -168,8 +181,37 @@ func (p *podmanRuntime) createContainer(ctx context.Context, args []string) (str
 	return strings.TrimSpace(string(output)), nil
 }
 
+// findFreePorts returns n free TCP ports on 127.0.0.1.
+// Each port is obtained by binding to :0 and immediately closing the listener.
+func findFreePorts(n int) ([]int, error) {
+	ports := make([]int, 0, n)
+	for range n {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return nil, fmt.Errorf("failed to find free port: %w", err)
+		}
+		port := l.Addr().(*net.TCPAddr).Port
+		l.Close()
+		ports = append(ports, port)
+	}
+	return ports, nil
+}
+
+// renderPodYAML renders the embedded pod YAML template with the given data.
+func renderPodYAML(data podTemplateData) ([]byte, error) {
+	tmpl, err := template.New("pod").Parse(string(pods.OnecliPodYAML))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse pod template: %w", err)
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return nil, fmt.Errorf("failed to render pod template: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
 // Create creates a new Podman runtime instance.
-// It uses kube play to create a pod with onecli services from the embedded YAML,
+// It uses kube play to create a pod with onecli services from the embedded YAML template,
 // then adds the workspace container to the same pod.
 func (p *podmanRuntime) Create(ctx context.Context, params runtime.CreateParams) (runtime.RuntimeInfo, error) {
 	stepLogger := steplogger.FromContext(ctx)
@@ -215,14 +257,27 @@ func (p *podmanRuntime) Create(ctx context.Context, params runtime.CreateParams)
 		return runtime.RuntimeInfo{}, err
 	}
 
-	// Write the per-workspace pod YAML (pod name = workspace name) to a temporary location
-	// so we can use it with kube play. We'll persist the final files once we have the container ID.
+	// Allocate random free ports for the pod
+	freePorts, err := findFreePorts(3)
+	if err != nil {
+		return runtime.RuntimeInfo{}, fmt.Errorf("failed to allocate free ports: %w", err)
+	}
+
+	// Render the pod YAML template
+	tmplData := podTemplateData{
+		Name:              params.Name,
+		PostgresPort:      freePorts[0],
+		OnecliPort:        freePorts[1],
+		OnecliMetricsPort: freePorts[2],
+		OnecliVersion:     defaultOnecliVersion,
+	}
+
 	tmpPodDir := filepath.Join(instanceDir, "pod")
 	if err := os.MkdirAll(tmpPodDir, 0755); err != nil {
 		return runtime.RuntimeInfo{}, fmt.Errorf("failed to create temp pod directory: %w", err)
 	}
 	tmpYAMLPath := filepath.Join(tmpPodDir, podYAMLFile)
-	if err := p.writeTempPodYAML(tmpYAMLPath, params.Name); err != nil {
+	if err := writePodYAMLFile(tmpYAMLPath, tmplData); err != nil {
 		return runtime.RuntimeInfo{}, err
 	}
 
@@ -247,7 +302,7 @@ func (p *podmanRuntime) Create(ctx context.Context, params runtime.CreateParams)
 	}
 
 	// Persist pod files keyed by the workspace container ID
-	if err := p.writePodFiles(containerID, params.Name); err != nil {
+	if err := p.writePodFiles(containerID, tmplData); err != nil {
 		return runtime.RuntimeInfo{}, fmt.Errorf("failed to persist pod files: %w", err)
 	}
 
@@ -266,26 +321,14 @@ func (p *podmanRuntime) Create(ctx context.Context, params runtime.CreateParams)
 	}, nil
 }
 
-// writeTempPodYAML writes the embedded YAML with the pod name replaced to a temporary path.
-func (p *podmanRuntime) writeTempPodYAML(path, workspaceName string) error {
-	yamlContent := p.templatePodYAML(workspaceName)
-	if err := os.WriteFile(path, yamlContent, 0644); err != nil {
+// writePodYAMLFile renders and writes the pod YAML template to the given path.
+func writePodYAMLFile(path string, data podTemplateData) error {
+	content, err := renderPodYAML(data)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, content, 0644); err != nil {
 		return fmt.Errorf("failed to write pod YAML: %w", err)
 	}
 	return nil
-}
-
-// templatePodYAML returns the embedded YAML with the pod metadata name replaced.
-func (p *podmanRuntime) templatePodYAML(workspaceName string) []byte {
-	return replaceYAMLPodName(workspaceName)
-}
-
-// replaceYAMLPodName replaces the pod metadata name in the embedded YAML template.
-func replaceYAMLPodName(workspaceName string) []byte {
-	return bytes.Replace(
-		pods.OnecliPodYAML,
-		[]byte("  name: onecli\n"),
-		[]byte("  name: "+workspaceName+"\n"),
-		1,
-	)
 }

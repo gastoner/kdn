@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: onecli
+  name: {{.Name}}
   labels:
     app: onecli
 spec:
@@ -18,17 +18,14 @@ spec:
           value: "onecli"
       ports:
         - containerPort: 5432
-          hostPort: 5432
+          hostPort: {{.PostgresPort}}
           hostIP: "127.0.0.1"
         - containerPort: 10254
-          hostPort: 10254
+          hostPort: {{.OnecliPort}}
           hostIP: "127.0.0.1"
         - containerPort: 10255
-          hostPort: 10255
+          hostPort: {{.OnecliMetricsPort}}
           hostIP: "127.0.0.1"
-      volumeMounts:
-        - name: pgdata
-          mountPath: /var/lib/postgresql
       readinessProbe:
         exec:
           command:
@@ -41,7 +38,7 @@ spec:
         failureThreshold: 10
 
     - name: onecli
-      image: ghcr.io/onecli/onecli:latest
+      image: ghcr.io/onecli/onecli:{{.OnecliVersion}}
       env:
         - name: DATABASE_URL
           value: "postgresql://onecli:onecli@localhost:5432/onecli"
@@ -51,14 +48,3 @@ spec:
           value: "http://127.0.0.1:10254"
         - name: APP_URL
           value: "http://127.0.0.1:10254"
-      volumeMounts:
-        - name: app-data
-          mountPath: /app/data
-
-  volumes:
-    - name: pgdata
-      persistentVolumeClaim:
-        claimName: pgdata
-    - name: app-data
-      persistentVolumeClaim:
-        claimName: app-data

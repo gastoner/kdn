@@ -110,19 +110,17 @@ func (p *podmanRuntime) podNamePath(containerID string) string {
 }
 
 // writePodFiles writes the per-workspace pod YAML and pod name file.
-// The YAML is derived from the embedded template with the pod name set to the workspace name.
-func (p *podmanRuntime) writePodFiles(containerID, workspaceName string) error {
+// The YAML is rendered from the embedded template using the supplied data.
+func (p *podmanRuntime) writePodFiles(containerID string, data podTemplateData) error {
 	dir := p.podDir(containerID)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create pod directory: %w", err)
 	}
 
-	yamlContent := replaceYAMLPodName(workspaceName)
-
-	if err := os.WriteFile(p.podYAMLPath(containerID), yamlContent, 0644); err != nil {
-		return fmt.Errorf("failed to write pod YAML: %w", err)
+	if err := writePodYAMLFile(p.podYAMLPath(containerID), data); err != nil {
+		return err
 	}
-	if err := os.WriteFile(p.podNamePath(containerID), []byte(workspaceName), 0644); err != nil {
+	if err := os.WriteFile(p.podNamePath(containerID), []byte(data.Name), 0644); err != nil {
 		return fmt.Errorf("failed to write pod name file: %w", err)
 	}
 	return nil

@@ -89,7 +89,14 @@ func setupPodFiles(t *testing.T, p *podmanRuntime, containerID, workspaceName st
 	if p.storageDir == "" {
 		p.storageDir = t.TempDir()
 	}
-	if err := p.writePodFiles(containerID, workspaceName); err != nil {
+	data := podTemplateData{
+		Name:              workspaceName,
+		PostgresPort:      15432,
+		OnecliPort:        20254,
+		OnecliMetricsPort: 20255,
+		OnecliVersion:     defaultOnecliVersion,
+	}
+	if err := p.writePodFiles(containerID, data); err != nil {
 		t.Fatalf("failed to write pod files for test: %v", err)
 	}
 	return workspaceName
